@@ -1,0 +1,19 @@
+{
+  "name": "template-application-frontend",
+  "private": true,
+  "packageManager": "npm@11.1.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "turbo build",
+    "test": "turbo test",
+    "lint": "turbo lint",
+    "dev": "turbo dev"
+  },
+  "devDependencies": {
+    "turbo": "^2.9.14",
+    "typescript": "^6.0.3"
+  }
+}

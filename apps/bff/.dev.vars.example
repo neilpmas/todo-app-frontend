@@ -1,0 +1,2 @@
+AUTH0_CLIENT_SECRET=your-auth0-client-secret
+BACKEND_URL=http://localhost:9090
