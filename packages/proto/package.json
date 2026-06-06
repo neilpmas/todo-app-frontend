@@ -13,6 +13,6 @@
     "@connectrpc/connect": "^1.4.0"
   },
   "devDependencies": {
-    "@bufbuild/buf": "latest"
+    "@bufbuild/buf": "^1.70.0"
   }
 }
