@@ -1,11 +1,12 @@
-name = "template-bff"
+name = "todo-app-bff"
 main = "src/index.ts"
 compatibility_date = "2025-01-01"
 compatibility_flags = ["nodejs_compat"]
 
 [[kv_namespaces]]
 binding = "SESSION_KV"
-id = "placeholder"
+id = "fc4b9de0b8634eef94c6783374657715"
+preview_id = "634eee0f9e724d8da37ad5b79c0405d3"
 
 [vars]
 APP_BASE_URL = ""
