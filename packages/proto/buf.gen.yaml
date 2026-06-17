@@ -1,8 +1,5 @@
 version: v2
 plugins:
-  - remote: buf.build/bufbuild/es:v1.10.0
-    out: src/gen
-    opt: target=ts
-  - remote: buf.build/connectrpc/es:v1.6.1
+  - local: protoc-gen-es
     out: src/gen
     opt: target=ts

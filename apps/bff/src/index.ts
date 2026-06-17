@@ -1,8 +1,16 @@
-import { Hono } from 'hono'
+import { Hono, type Context } from 'hono'
 import { createBezzie, providers, cloudflareKVAdapter } from 'bezzie'
-import { createClient } from '@connectrpc/connect'
+import { createClient, ConnectError, Code } from '@connectrpc/connect'
 import { createGrpcWebTransport } from '@connectrpc/connect-web'
-import { TemplateService } from '@template/proto'
+import { TemplateService, type Todo } from '@template/proto'
+import { timestampDate } from '@bufbuild/protobuf/wkt'
+import { getTodoClient } from './lib/todoClient'
+
+const serializeTodo = (todo: Todo) => ({
+  ...todo,
+  completedAt: todo.completedAt ? timestampDate(todo.completedAt).toISOString() : null,
+  createdAt: todo.createdAt ? timestampDate(todo.createdAt).toISOString() : null,
+})
 
 export interface Env {
   SESSION_KV: KVNamespace
@@ -33,6 +41,69 @@ export default {
       const client = createClient(TemplateService, transport)
       const info = await client.getServerInfo({})
       return c.json(info)
+    })
+
+    const handleConnectError = (err: unknown, c: Context) => {
+      if (err instanceof ConnectError) {
+        switch (err.code) {
+          case Code.NotFound:
+            return c.json({ error: 'Not Found' }, 404)
+          case Code.PermissionDenied:
+            return c.json({ error: 'Permission Denied' }, 403)
+          case Code.Unauthenticated:
+            return c.json({ error: 'Unauthenticated' }, 401)
+        }
+      }
+      return c.json({ error: 'Internal Server Error' }, 500)
+    }
+
+    app.get('/api/todos', auth.middleware(), async (c) => {
+      const { client, options } = getTodoClient(c.env.BACKEND_URL, c.var.accessToken)
+      try {
+        const response = await client.getTodos({}, options)
+        return c.json(response.todos.map(serializeTodo))
+      } catch (err) {
+        return handleConnectError(err, c)
+      }
+    })
+
+    app.post('/api/todos', auth.middleware(), async (c) => {
+      const { title } = await c.req.json<{ title: string }>()
+      if (!title || title.trim() === '') {
+        return c.json({ error: 'Title is required' }, 400)
+      }
+      const { client, options } = getTodoClient(c.env.BACKEND_URL, c.var.accessToken)
+      try {
+        const todo = await client.createTodo({ title }, options)
+        return c.json(serializeTodo(todo), 201)
+      } catch (err) {
+        return handleConnectError(err, c)
+      }
+    })
+
+    app.patch('/api/todos/:id', auth.middleware(), async (c) => {
+      const id = c.req.param('id')
+      const { client, options } = getTodoClient(c.env.BACKEND_URL, c.var.accessToken)
+      try {
+        const todo = await client.completeTodo({ id }, options)
+        return c.json(serializeTodo(todo))
+      } catch (err) {
+        return handleConnectError(err, c)
+      }
+    })
+
+    app.delete('/api/todos/:id', auth.middleware(), async (c) => {
+      const id = c.req.param('id')
+      const { client, options } = getTodoClient(c.env.BACKEND_URL, c.var.accessToken)
+      try {
+        const response = await client.deleteTodo({ id }, options)
+        if (response.success) {
+          return c.body(null, 204)
+        }
+        return c.json({ error: 'Failed to delete todo' }, 500)
+      } catch (err) {
+        return handleConnectError(err, c)
+      }
     })
 
     return app.fetch(request, env, ctx)
