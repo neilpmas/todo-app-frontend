@@ -11,7 +11,7 @@
   },
   "dependencies": {
     "@connectrpc/connect": "^2.1.1",
-    "@connectrpc/connect-web": "^2.0.0",
+    "@connectrpc/connect-web": "^2.1.2",
     "@template/proto": "*",
     "bezzie": "^1.0.2",
     "hono": "^4.12.23"
