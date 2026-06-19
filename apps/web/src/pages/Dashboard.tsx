@@ -3,6 +3,7 @@ import { useServerInfo } from "@/hooks/useServerInfo"
 import { Button } from "@/components/ui/button"
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card"
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar"
+import { TodoList } from "@/components/TodoList"
 
 /**
  * Dashboard page
@@ -43,6 +44,10 @@ export default function Dashboard() {
           <p>Welcome to your dashboard!</p>
         </CardContent>
       </Card>
+
+      <div className="mt-8">
+        <TodoList />
+      </div>
 
       <Card className="mt-8">
         <CardHeader>
