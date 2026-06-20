@@ -24,6 +24,7 @@ export interface Env {
 
 export default {
   fetch(request: Request, env: Env, ctx: ExecutionContext) {
+    const isLocal = new URL(env.APP_BASE_URL).hostname === 'localhost'
     const auth = createBezzie({
       ...providers.auth0(env.AUTH0_DOMAIN),
       clientId: env.AUTH0_CLIENT_ID,
@@ -31,6 +32,8 @@ export default {
       audience: env.AUTH0_AUDIENCE,
       adapter: cloudflareKVAdapter(env.SESSION_KV),
       baseUrl: env.APP_BASE_URL,
+      defaultReturnTo: '/dashboard',
+      secureCookies: !isLocal,
     })
 
     const app = new Hono<{ Bindings: Env }>()
@@ -105,16 +108,6 @@ export default {
       } catch (err) {
         return handleConnectError(err, c)
       }
-    })
-
-    app.get('*', async (c) => {
-      const url = new URL(c.req.url)
-      const viteUrl = `http://localhost:5173${url.pathname}${url.search}`
-      const headers = new Headers(c.req.raw.headers)
-      headers.delete('host')
-      headers.delete('accept-encoding')
-      const res = await fetch(viteUrl, { headers })
-      return new Response(res.body, { status: res.status, headers: res.headers })
     })
 
     return app.fetch(request, env, ctx)
