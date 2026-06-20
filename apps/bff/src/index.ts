@@ -14,6 +14,7 @@ const serializeTodo = (todo: Todo) => ({
 
 export interface Env {
   SESSION_KV: KVNamespace
+  AUTH0_DOMAIN: string
   AUTH0_CLIENT_ID: string
   AUTH0_CLIENT_SECRET: string
   AUTH0_AUDIENCE: string
@@ -23,13 +24,16 @@ export interface Env {
 
 export default {
   fetch(request: Request, env: Env, ctx: ExecutionContext) {
+    const isLocal = new URL(env.APP_BASE_URL).hostname === 'localhost'
     const auth = createBezzie({
-      ...providers.auth0(new URL(env.APP_BASE_URL).hostname),
+      ...providers.auth0(env.AUTH0_DOMAIN),
       clientId: env.AUTH0_CLIENT_ID,
       clientSecret: env.AUTH0_CLIENT_SECRET,
       audience: env.AUTH0_AUDIENCE,
       adapter: cloudflareKVAdapter(env.SESSION_KV),
       baseUrl: env.APP_BASE_URL,
+      defaultReturnTo: '/dashboard',
+      secureCookies: !isLocal,
     })
 
     const app = new Hono<{ Bindings: Env }>()

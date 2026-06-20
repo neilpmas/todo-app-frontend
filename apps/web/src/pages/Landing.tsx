@@ -7,7 +7,7 @@ export default function Landing() {
       <p className="text-xl text-muted-foreground mb-8 text-center max-w-md">
         A full-stack template with React 19, Vite 8, Tailwind CSS v4, and Cloudflare Workers.
       </p>
-      <a href="/auth/login">
+      <a href="/auth/login?returnTo=/dashboard">
         <Button size="lg">Login</Button>
       </a>
     </div>

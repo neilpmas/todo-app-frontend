@@ -33,6 +33,7 @@ describe('BFF Worker', () => {
       put: vi.fn(),
       delete: vi.fn(),
     },
+    AUTH0_DOMAIN: 'test.example.com',
     AUTH0_CLIENT_ID: 'test-client-id',
     AUTH0_CLIENT_SECRET: 'test-client-secret',
     AUTH0_AUDIENCE: 'https://api.test.example.com',
