@@ -38,16 +38,37 @@ Managed by [Turborepo](https://turbo.build) — `npm run dev` starts both apps i
 
 ## Architecture
 
+```mermaid
+C4Context
+  title System Context — Frontend & BFF
+
+  Person(user, "User", "Browser")
+  System(bff, "Cloudflare Worker (BFF)", "Owns OAuth flow, issues session cookies, proxies API requests via gRPC-Web")
+  System_Ext(idp, "Auth0", "Identity provider — issues tokens via Authorization Code + PKCE")
+  System_Ext(backend, "Spring Boot Backend", "Domain logic, gRPC API, Neon Postgres")
+
+  Rel(user, bff, "HTTPS + session cookie")
+  Rel(bff, idp, "OIDC discovery, token exchange, token refresh")
+  Rel(bff, backend, "gRPC-Web + Authorization: Bearer")
+  Rel(idp, user, "Redirect after login")
 ```
-Browser (React)
-    │
-    │  HTTP/3 (Cloudflare handles this automatically)
-    ▼
-Cloudflare Workers — BFF (Bezzie)
-    │
-    │  gRPC-Web over HTTP/2 + Bearer token
-    ▼
-Spring Boot backend (Fly.io)
+
+```mermaid
+C4Container
+  title Container — Frontend & BFF
+
+  Person(user, "User")
+  Container(spa, "React SPA", "Vite, Tailwind, shadcn/ui", "Landing page + authenticated dashboard")
+  Container(worker, "Cloudflare Worker", "Hono + Bezzie", "BFF: auth routes, session middleware, gRPC-Web proxy")
+  ContainerDb(kv, "Cloudflare KV", "KVNamespace", "Sessions and PKCE state")
+  System_Ext(idp, "Auth0", "Identity provider")
+  System_Ext(backend, "Spring Boot Backend", "gRPC API")
+
+  Rel(user, spa, "HTTPS")
+  Rel(spa, worker, "Same-origin /auth/* and /api/* requests + session cookie")
+  Rel(worker, kv, "Session read/write/delete")
+  Rel(worker, idp, "OIDC discovery, token exchange, token refresh, JWKS")
+  Rel(worker, backend, "gRPC-Web + Authorization: Bearer")
 ```
 
 ## Auth
@@ -58,11 +79,11 @@ Auth is handled by **[Bezzie](https://github.com/neilpmas/bezzie)** — an open 
 
 ```
 React → BFF /auth/login → Auth0 (Authorization Code + PKCE)
-                                  │
-                             code returned
-                                  │
-             BFF exchanges code for tokens → stored in Cloudflare KV
-             BFF issues HttpOnly; Secure; SameSite=Strict session cookie → React
+                                │
+                           code returned
+                                │
+           BFF exchanges code for tokens → stored in Cloudflare KV
+           BFF issues HttpOnly; SameSite=Lax session cookie (Secure in production) → React
 ```
 
 ### Per-request flow
@@ -81,7 +102,7 @@ The React app never holds a token. It uses the session cookie for every request.
 | UI | React | 19 |
 | Build | Vite | 8 |
 | Styling | Tailwind CSS | 4 |
-| Components | shadcn/ui (Radix UI primitives) | — |
+| Components | shadcn/ui (Base UI primitives) | — |
 | Monorepo | Turborepo | — |
 | BFF | Cloudflare Workers | — |
 | Auth library | [Bezzie](https://github.com/neilpmas/bezzie) | — |
@@ -96,7 +117,7 @@ The React app never holds a token. It uses the session cookie for every request.
 - Node.js 20+
 - npm 11 (included as `packageManager` in `package.json`)
 - [Wrangler CLI](https://developers.cloudflare.com/workers/wrangler/) — `npm install -g wrangler`
-- A local or deployed Spring Boot backend running on port 8080
+- A local or deployed Spring Boot backend running on port 9090 (gRPC)
 
 ### Install
 
@@ -106,7 +127,13 @@ npm install
 
 ### Config
 
-**BFF** — copy `apps/bff/.dev.vars.example` to `apps/bff/.dev.vars` (gitignored):
+**BFF secrets** — copy `apps/bff/.dev.vars.example` to `apps/bff/.dev.vars` (gitignored):
+
+```
+AUTH0_CLIENT_SECRET=your-web-client-secret
+```
+
+**BFF config** — non-secret config lives in `apps/bff/wrangler.toml` under `[vars]`. For local dev, set these in `.dev.vars` too (they override the empty defaults in `wrangler.toml`):
 
 ```
 AUTH0_DOMAIN=your-tenant.auth0.com
@@ -114,20 +141,18 @@ AUTH0_CLIENT_ID=your-web-client-id
 AUTH0_CLIENT_SECRET=your-web-client-secret
 AUTH0_AUDIENCE=https://api.yourproject.com
 APP_BASE_URL=http://localhost:5173
-BACKEND_URL=http://localhost:8080
+BACKEND_URL=http://localhost:9090
 ```
 
-**React app** — copy `apps/web/.env.example` to `apps/web/.env.local` (gitignored):
-
-```
-VITE_BFF_URL=http://localhost:8787
-```
+**React app** — no env file needed. The web app makes same-origin `fetch('/api/...')` and `fetch('/auth/...')` calls, which Vite proxies to the BFF automatically (configured in `vite.config.ts`).
 
 ### Run
 
 ```bash
 npm run dev          # starts both React (port 5173) and BFF Worker (port 8787) via Turborepo
 ```
+
+Open `http://localhost:5173` in your browser. Vite proxies `/auth/*` and `/api/*` requests to the BFF on port 8787.
 
 Or individually:
 
@@ -142,9 +167,11 @@ Cloudflare KV is simulated in memory by Wrangler — no Cloudflare account neede
 
 Register a separate Auth0 **Regular Web Application** for local dev (don't reuse production credentials):
 
-- **Allowed Callback URLs:** `http://localhost:8787/auth/callback`
+- **Allowed Callback URLs:** `http://localhost:5173/auth/callback`
 - **Allowed Logout URLs:** `http://localhost:5173`
 - **Allowed Web Origins:** `http://localhost:5173`
+
+Also grant your application access to the API: **Applications → APIs → your API → Application Access → User Delegated → grant the web application**.
 
 ### gRPC-Web client
 
