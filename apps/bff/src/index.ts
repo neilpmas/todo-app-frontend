@@ -1,10 +1,11 @@
 import { Hono, type Context } from 'hono'
 import { createBezzie, providers, cloudflareKVAdapter } from 'bezzie'
 import { createClient, ConnectError, Code } from '@connectrpc/connect'
-import { createGrpcWebTransport } from '@connectrpc/connect-web'
+import { createConnectTransport } from '@connectrpc/connect-web'
 import { TemplateService, type Todo } from '@template/proto'
 import { timestampDate } from '@bufbuild/protobuf/wkt'
 import { getTodoClient } from './lib/todoClient'
+import { workersFetch } from './lib/workersFetch'
 
 const serializeTodo = (todo: Todo) => ({
   ...todo,
@@ -40,13 +41,6 @@ export default {
     app.route('/auth', auth.routes())
     app.get('/api/me', auth.middleware(), (c) => c.json(c.var.user))
 
-    app.get('/api/info', auth.middleware(), async (c) => {
-      const transport = createGrpcWebTransport({ baseUrl: c.env.BACKEND_URL })
-      const client = createClient(TemplateService, transport)
-      const info = await client.getServerInfo({})
-      return c.json(info)
-    })
-
     const handleConnectError = (err: unknown, c: Context) => {
       if (err instanceof ConnectError) {
         switch (err.code) {
@@ -58,8 +52,24 @@ export default {
             return c.json({ error: 'Unauthenticated' }, 401)
         }
       }
+      if (err instanceof ConnectError) {
+        console.error('ConnectError code=' + err.code + ' message=' + err.message + ' rawMessage=' + err.rawMessage)
+      } else {
+        console.error('Non-ConnectError:', err)
+      }
       return c.json({ error: 'Internal Server Error' }, 500)
     }
+
+    app.get('/api/info', auth.middleware(), async (c) => {
+      const transport = createConnectTransport({ baseUrl: `${c.env.BACKEND_URL}/connect`, useBinaryFormat: true, fetch: workersFetch })
+      const client = createClient(TemplateService, transport)
+      try {
+        const info = await client.getServerInfo({}, { headers: { authorization: `Bearer ${c.var.accessToken}` } })
+        return c.json(info)
+      } catch (err) {
+        return handleConnectError(err, c)
+      }
+    })
 
     app.get('/api/todos', auth.middleware(), async (c) => {
       const { client, options } = getTodoClient(c.env.BACKEND_URL, c.var.accessToken)
