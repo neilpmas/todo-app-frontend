@@ -1,13 +1,14 @@
-import { createGrpcWebTransport } from '@connectrpc/connect-web'
+import { createConnectTransport } from '@connectrpc/connect-web'
 import { createClient, Transport } from '@connectrpc/connect'
 import { TodosService } from '@template/proto'
+import { workersFetch } from './workersFetch'
 
 let cachedTransport: Transport | undefined;
 let cachedBaseUrl: string | undefined;
 
 export function getTodoClient(baseUrl: string, token: string) {
   if (!cachedTransport || cachedBaseUrl !== baseUrl) {
-    cachedTransport = createGrpcWebTransport({ baseUrl });
+    cachedTransport = createConnectTransport({ baseUrl: `${baseUrl}/connect`, useBinaryFormat: true, fetch: workersFetch });
     cachedBaseUrl = baseUrl;
   }
   
