@@ -7,8 +7,6 @@ import { TodoList } from "@/components/TodoList"
 
 /**
  * Dashboard page
- * Note: Requires BFF running locally at http://localhost:8787 to test end-to-end.
- * Not tested end-to-end in this environment.
  */
 export default function Dashboard() {
   const { user } = useUser()
@@ -24,9 +22,9 @@ export default function Dashboard() {
     <div className="p-8 max-w-4xl mx-auto">
       <header className="flex justify-between items-center mb-8">
         <h1 className="text-3xl font-bold">Dashboard</h1>
-        <a href="/auth/logout">
-          <Button variant="outline">Logout</Button>
-        </a>
+        <form action="/auth/logout" method="post">
+          <Button variant="outline" type="submit">Logout</Button>
+        </form>
       </header>
 
       <Card>

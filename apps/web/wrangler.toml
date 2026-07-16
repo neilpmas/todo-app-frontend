@@ -1,6 +1,10 @@
 name = "todo-app-web"
 compatibility_date = "2025-08-15"
 
+routes = [
+  { pattern = "todo.neilmason.dev/*", zone_name = "neilmason.dev" }
+]
+
 [assets]
 directory = "./dist"
 not_found_handling = "single-page-application"
