@@ -3,14 +3,20 @@ main = "src/index.ts"
 compatibility_date = "2025-01-01"
 compatibility_flags = ["nodejs_compat"]
 
+routes = [
+  { pattern = "todo.neilmason.dev/api/*", zone_name = "neilmason.dev" },
+  { pattern = "todo.neilmason.dev/auth/*", zone_name = "neilmason.dev" }
+]
+
 [[kv_namespaces]]
 binding = "SESSION_KV"
 id = "fc4b9de0b8634eef94c6783374657715"
 preview_id = "634eee0f9e724d8da37ad5b79c0405d3"
 
 [vars]
-APP_BASE_URL = ""
-AUTH0_CLIENT_ID = ""
-AUTH0_AUDIENCE = ""
-BACKEND_URL = ""
+APP_BASE_URL = "https://todo.neilmason.dev"
+AUTH0_DOMAIN = "dev-16c3oauv6q5ojze3.us.auth0.com"
+AUTH0_CLIENT_ID = "u24qzUlapctSSR9UpmCX6FpSAEbSgLTQ"
+AUTH0_AUDIENCE = "https://api.todo-app.com"
+BACKEND_URL = "https://todo-app-backend-neilpmas.fly.dev"
 
