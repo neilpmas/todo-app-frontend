@@ -41,6 +41,15 @@ export function useTodos() {
     setFetchCount(c => c + 1)
   }
 
+  function handleMutationFailure(res: Response, rollback: () => void, message: string) {
+    if (res.status === 401) {
+      window.location.href = '/auth/login'
+      return
+    }
+    rollback()
+    setError(message)
+  }
+
   async function addTodo(title: string): Promise<void> {
     const snapshot = todos
     const tempTodo: Todo = {
@@ -61,8 +70,7 @@ export function useTodos() {
         const serverTodo = await res.json()
         setTodos(prev => prev.map(t => t.id === tempTodo.id ? serverTodo : t))
       } else {
-        setTodos(snapshot)
-        setError('Failed to add todo')
+        handleMutationFailure(res, () => setTodos(snapshot), 'Failed to add todo')
       }
     } catch {
       setTodos(snapshot)
@@ -79,8 +87,7 @@ export function useTodos() {
         const serverTodo = await res.json()
         setTodos(prev => prev.map(t => t.id === id ? serverTodo : t))
       } else {
-        setTodos(snapshot)
-        setError('Failed to complete todo')
+        handleMutationFailure(res, () => setTodos(snapshot), 'Failed to complete todo')
       }
     } catch {
       setTodos(snapshot)
@@ -94,8 +101,7 @@ export function useTodos() {
     try {
       const res = await fetch('/api/todos/' + id, { method: 'DELETE' })
       if (!res.ok) {
-        setTodos(snapshot)
-        setError('Failed to delete todo')
+        handleMutationFailure(res, () => setTodos(snapshot), 'Failed to delete todo')
       }
     } catch {
       setTodos(snapshot)
