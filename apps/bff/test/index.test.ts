@@ -73,6 +73,28 @@ describe('BFF Worker', () => {
     expect(response.headers.get('Location')).toContain('auth0.com')
   })
 
+  it('redirects on POST /auth/logout', async () => {
+    const request = new Request('https://test.example.com/auth/logout', { method: 'POST' })
+    const ctx = {
+      waitUntil: vi.fn(),
+      passThroughOnException: vi.fn(),
+    } as unknown as ExecutionContext
+    const response = await worker.fetch(request, TEST_ENV, ctx)
+
+    expect(response.status).toBe(302)
+  })
+
+  it('returns 404 for GET /auth/logout (bezzie only registers it as POST)', async () => {
+    const request = new Request('https://test.example.com/auth/logout')
+    const ctx = {
+      waitUntil: vi.fn(),
+      passThroughOnException: vi.fn(),
+    } as unknown as ExecutionContext
+    const response = await worker.fetch(request, TEST_ENV, ctx)
+
+    expect(response.status).toBe(404)
+  })
+
   it('returns 401 for /api/me without session', async () => {
     const request = new Request('https://test.example.com/api/me')
     const ctx = {

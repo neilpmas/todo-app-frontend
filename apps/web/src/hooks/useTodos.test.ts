@@ -91,6 +91,35 @@ describe('useTodos', () => {
     })
   })
 
+  it('should redirect to /auth/login on 401 from addTodo', async () => {
+    const originalLocation = window.location
+    // @ts-expect-error - mocking window.location
+    delete window.location
+    window.location = { ...originalLocation, href: '' }
+
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ok: true,
+      json: async () => [],
+    } as Response)
+
+    const { result } = renderHook(() => useTodos())
+    await waitFor(() => expect(result.current.loading).toBe(false))
+
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ok: false,
+      status: 401,
+    } as Response)
+
+    await act(async () => {
+      await result.current.addTodo('Fail todo')
+    })
+
+    expect(window.location.href).toBe('/auth/login')
+    expect(result.current.error).toBe(null)
+
+    window.location = originalLocation
+  })
+
   it('should rollback addTodo on failure', async () => {
     vi.mocked(fetch).mockResolvedValueOnce({
       ok: true,
@@ -138,6 +167,35 @@ describe('useTodos', () => {
     })
   })
 
+  it('should redirect to /auth/login on 401 from completeTodo', async () => {
+    const originalLocation = window.location
+    // @ts-expect-error - mocking window.location
+    delete window.location
+    window.location = { ...originalLocation, href: '' }
+
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ok: true,
+      json: async () => [mockTodo],
+    } as Response)
+
+    const { result } = renderHook(() => useTodos())
+    await waitFor(() => expect(result.current.loading).toBe(false))
+
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ok: false,
+      status: 401,
+    } as Response)
+
+    await act(async () => {
+      await result.current.completeTodo('1')
+    })
+
+    expect(window.location.href).toBe('/auth/login')
+    expect(result.current.error).toBe(null)
+
+    window.location = originalLocation
+  })
+
   it('should rollback completeTodo on failure', async () => {
     vi.mocked(fetch).mockResolvedValueOnce({
       ok: true,
@@ -179,6 +237,35 @@ describe('useTodos', () => {
     })
 
     expect(result.current.todos).toEqual([])
+  })
+
+  it('should redirect to /auth/login on 401 from deleteTodo', async () => {
+    const originalLocation = window.location
+    // @ts-expect-error - mocking window.location
+    delete window.location
+    window.location = { ...originalLocation, href: '' }
+
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ok: true,
+      json: async () => [mockTodo],
+    } as Response)
+
+    const { result } = renderHook(() => useTodos())
+    await waitFor(() => expect(result.current.loading).toBe(false))
+
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ok: false,
+      status: 401,
+    } as Response)
+
+    await act(async () => {
+      await result.current.deleteTodo('1')
+    })
+
+    expect(window.location.href).toBe('/auth/login')
+    expect(result.current.error).toBe(null)
+
+    window.location = originalLocation
   })
 
   it('should rollback deleteTodo on failure', async () => {
