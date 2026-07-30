@@ -1,16 +1,25 @@
 import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest'
 import type { ExecutionContext } from '@cloudflare/workers-types'
 import type { Client } from '@connectrpc/connect'
-import { TodosService } from '@template/proto'
+import { TodosService, TemplateService } from '@template/proto'
 import { timestampFromDate } from '@bufbuild/protobuf/wkt'
 import worker from '../src/index'
 import type { Env } from '../src'
 import { getTodoClient } from '../src/lib/todoClient'
-import { ConnectError, Code } from '@connectrpc/connect'
+import { ConnectError, Code, createClient } from '@connectrpc/connect'
 
 vi.mock('../src/lib/todoClient', () => ({
   getTodoClient: vi.fn(),
 }))
+
+vi.mock('../src/lib/transport', () => ({
+  getTransport: vi.fn(),
+}))
+
+vi.mock('@connectrpc/connect', async () => {
+  const actual = await vi.importActual<typeof import('@connectrpc/connect')>('@connectrpc/connect')
+  return { ...actual, createClient: vi.fn() }
+})
 
 vi.stubGlobal('fetch', async (url: string) => {
   if (url.includes('.well-known/openid-configuration')) {
@@ -146,6 +155,32 @@ describe('BFF Worker', () => {
       expect(getTodos).toHaveBeenCalled()
     })
 
+    it('GET /api/todos does not leak the protobuf-es $typeName field', async () => {
+      const mockTodos = [
+        {
+          $typeName: 'todos.v1.Todo',
+          id: '1',
+          userId: 'user-123',
+          title: 'Test Todo',
+          completedAt: undefined,
+          createdAt: timestampFromDate(new Date('2024-01-01')),
+        },
+      ]
+      const getTodos = vi.fn().mockResolvedValue({ todos: mockTodos })
+      vi.mocked(getTodoClient).mockReturnValue({
+        client: { getTodos } as unknown as Client<typeof TodosService>,
+        options: { headers: { authorization: `Bearer ${accessToken}` } },
+      })
+
+      const request = new Request('https://test.example.com/api/todos', {
+        headers: { Cookie: `__Host-session=${sessionId}` },
+      })
+      const response = await worker.fetch(request, TEST_ENV, ctx)
+
+      const data = await response.json() as Array<Record<string, unknown>>
+      expect(data[0]).not.toHaveProperty('$typeName')
+    })
+
     it('GET /api/todos returns 404 on NotFound error', async () => {
       const getTodos = vi.fn().mockRejectedValue(new ConnectError('Not found', Code.NotFound))
       vi.mocked(getTodoClient).mockReturnValue({
@@ -258,6 +293,38 @@ describe('BFF Worker', () => {
 
       expect(response.status).toBe(204)
       expect(deleteTodo).toHaveBeenCalledWith({ id: '1' }, expect.anything())
+    })
+  })
+
+  describe('GET /api/info', () => {
+    const sessionId = 'session-456'
+    const accessToken = 'token-456'
+    const ctx = {
+      waitUntil: vi.fn(),
+      passThroughOnException: vi.fn(),
+    } as unknown as ExecutionContext
+
+    beforeEach(() => {
+      setupSession(sessionId, accessToken)
+    })
+
+    it('returns only version and environment, not the protobuf-es $typeName field', async () => {
+      const getServerInfo = vi.fn().mockResolvedValue({
+        $typeName: 'template.v1.GetServerInfoResponse',
+        version: '1.2.3',
+        environment: 'production',
+      })
+      vi.mocked(createClient).mockReturnValue({ getServerInfo } as unknown as Client<typeof TemplateService>)
+
+      const request = new Request('https://test.example.com/api/info', {
+        headers: { Cookie: `__Host-session=${sessionId}` },
+      })
+      const response = await worker.fetch(request, TEST_ENV, ctx)
+
+      expect(response.status).toBe(200)
+      const data = await response.json()
+      expect(data).toEqual({ version: '1.2.3', environment: 'production' })
+      expect(getServerInfo).toHaveBeenCalled()
     })
   })
 })

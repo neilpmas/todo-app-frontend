@@ -1,18 +1,9 @@
-import { createConnectTransport } from '@connectrpc/connect-web'
-import { createClient, Transport } from '@connectrpc/connect'
+import { createClient } from '@connectrpc/connect'
 import { TodosService } from '@template/proto'
-import { workersFetch } from './workersFetch'
-
-let cachedTransport: Transport | undefined;
-let cachedBaseUrl: string | undefined;
+import { getTransport } from './transport'
 
 export function getTodoClient(baseUrl: string, token: string) {
-  if (!cachedTransport || cachedBaseUrl !== baseUrl) {
-    cachedTransport = createConnectTransport({ baseUrl: `${baseUrl}/connect`, useBinaryFormat: true, fetch: workersFetch });
-    cachedBaseUrl = baseUrl;
-  }
-  
-  const client = createClient(TodosService, cachedTransport);
+  const client = createClient(TodosService, getTransport(baseUrl));
   return {
     client,
     options: {

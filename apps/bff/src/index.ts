@@ -1,14 +1,17 @@
 import { Hono, type Context } from 'hono'
 import { createBezzie, providers, cloudflareKVAdapter } from 'bezzie'
 import { createClient, ConnectError, Code } from '@connectrpc/connect'
-import { createConnectTransport } from '@connectrpc/connect-web'
 import { TemplateService, type Todo } from '@template/proto'
 import { timestampDate } from '@bufbuild/protobuf/wkt'
 import { getTodoClient } from './lib/todoClient'
-import { workersFetch } from './lib/workersFetch'
+import { getTransport } from './lib/transport'
 
+// protobuf-es messages carry a $typeName field (and other internal shape) that
+// shouldn't leak into the JSON API -- pick only the fields the frontend actually uses.
 const serializeTodo = (todo: Todo) => ({
-  ...todo,
+  id: todo.id,
+  userId: todo.userId,
+  title: todo.title,
   completedAt: todo.completedAt ? timestampDate(todo.completedAt).toISOString() : null,
   createdAt: todo.createdAt ? timestampDate(todo.createdAt).toISOString() : null,
 })
@@ -61,11 +64,10 @@ export default {
     }
 
     app.get('/api/info', auth.middleware(), async (c) => {
-      const transport = createConnectTransport({ baseUrl: `${c.env.BACKEND_URL}/connect`, useBinaryFormat: true, fetch: workersFetch })
-      const client = createClient(TemplateService, transport)
+      const client = createClient(TemplateService, getTransport(c.env.BACKEND_URL))
       try {
         const info = await client.getServerInfo({}, { headers: { authorization: `Bearer ${c.var.accessToken}` } })
-        return c.json(info)
+        return c.json({ version: info.version, environment: info.environment })
       } catch (err) {
         return handleConnectError(err, c)
       }
