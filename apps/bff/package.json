@@ -17,7 +17,7 @@
     "hono": "^4.12.23"
   },
   "devDependencies": {
-    "@cloudflare/vitest-pool-workers": "^0.16.16",
+    "@cloudflare/vitest-pool-workers": "^0.20.3",
     "@cloudflare/workers-types": "^5.20260722.1",
     "@eslint/js": "^10.0.1",
     "eslint": "^10.7.0",
