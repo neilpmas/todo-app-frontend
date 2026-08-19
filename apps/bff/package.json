@@ -23,7 +23,7 @@
     "eslint": "^10.7.0",
     "globals": "^17.7.0",
     "typescript": "^6",
-    "typescript-eslint": "^8.65.0",
+    "typescript-eslint": "^8.67.0",
     "vitest": "^4.1.10",
     "wrangler": "^4.106.0"
   }
