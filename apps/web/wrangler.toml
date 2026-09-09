@@ -1,4 +1,4 @@
-name = "todo-app-web"
+name = "todo-app-frontend"
 compatibility_date = "2025-08-15"
 
 routes = [
