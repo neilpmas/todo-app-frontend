@@ -167,7 +167,15 @@ adds the `Authorization` header on the way out.
 ### Prerequisites
 
 - Node.js 20+
-- npm 11 (included as `packageManager` in `package.json`)
+- npm 11 (declared as `devEngines.packageManager` in `package.json`)
+
+  > Do not reintroduce the legacy `packageManager: "npm@x.y.z"` field. Cloudflare
+  > Workers Builds reads it and tries to install that exact npm version as a build
+  > tool, but its build image cannot install npm independently — npm always
+  > "corresponds with the Node.js version". The build then dies at
+  > `Failed: error occurred while installing tools or dependencies` with no other
+  > output. Turborepo needs *some* package-manager declaration, so `devEngines`
+  > is used instead: Turborepo reads it, Workers Builds does not.
 - [Wrangler CLI](https://developers.cloudflare.com/workers/wrangler/) — `npm install -g wrangler`
 - A local or deployed Spring Boot backend, reachable over **HTTP on port 8080**
 

@@ -1,11 +1,17 @@
 {
   "name": "template-application-frontend",
   "private": true,
-  "packageManager": "npm@11.1.0",
   "workspaces": [
     "apps/*",
     "packages/*"
   ],
+  "devEngines": {
+    "packageManager": {
+      "name": "npm",
+      "version": "^11",
+      "onFail": "warn"
+    }
+  },
   "scripts": {
     "build": "turbo build",
     "test": "turbo test",
