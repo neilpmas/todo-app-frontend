@@ -2,13 +2,14 @@ import { createClient } from '@connectrpc/connect'
 import { TodosService } from '@template/proto'
 import { getTransport } from './transport'
 
-export function getTodoClient(baseUrl: string, token: string) {
+export function getTodoClient(baseUrl: string, token: string, requestId: string) {
   const client = createClient(TodosService, getTransport(baseUrl));
   return {
     client,
     options: {
       headers: {
         authorization: `Bearer ${token}`,
+        'x-request-id': requestId,
       },
     },
   };
