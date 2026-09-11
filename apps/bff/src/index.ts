@@ -3,6 +3,7 @@ import { createBezzie, providers, cloudflareKVAdapter } from 'bezzie'
 import { createClient, ConnectError, Code } from '@connectrpc/connect'
 import { TemplateService, type Todo } from '@template/proto'
 import { timestampDate } from '@bufbuild/protobuf/wkt'
+import * as Sentry from '@sentry/cloudflare'
 import { getTodoClient } from './lib/todoClient'
 import { getTransport } from './lib/transport'
 import { log } from './lib/log'
@@ -25,13 +26,15 @@ export interface Env {
   AUTH0_AUDIENCE: string
   APP_BASE_URL: string
   BACKEND_URL: string
+  // Optional -- unset SENTRY_DSN is a documented no-op in the SDK, not an error.
+  SENTRY_DSN?: string
 }
 
 type Variables = {
   requestId: string
 }
 
-export default {
+const worker = {
   fetch(request: Request, env: Env, ctx: ExecutionContext) {
     const isLocal = new URL(env.APP_BASE_URL).hostname === 'localhost'
     const auth = createBezzie({
@@ -81,6 +84,10 @@ export default {
             return c.json({ error: 'Unauthenticated' }, 401)
         }
       }
+      // Only reached for ConnectError codes not handled above (i.e. genuinely
+      // unexpected ones, not the routine NotFound/PermissionDenied/Unauthenticated
+      // cases) and non-Connect errors -- both are worth Sentry's attention.
+      Sentry.captureException(err, { extra: { requestId: c.var.requestId } })
       if (err instanceof ConnectError) {
         log.error('backend call failed', {
           requestId: c.var.requestId,
@@ -162,3 +169,15 @@ export default {
     return app.fetch(request, env, ctx)
   }
 }
+
+// Error tracking only for now, no performance tracing -- matches the backend's
+// Sentry config, and keeps a free-tier event quota from getting eaten by spans
+// nothing here needs yet.
+export default Sentry.withSentry(
+  (env: Env) => ({
+    dsn: env.SENTRY_DSN,
+    tracesSampleRate: 0,
+    sendDefaultPii: false,
+  }),
+  worker,
+)
