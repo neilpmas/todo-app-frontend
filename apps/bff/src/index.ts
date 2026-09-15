@@ -8,6 +8,27 @@ import { getTodoClient } from './lib/todoClient'
 import { getTransport } from './lib/transport'
 import { log } from './lib/log'
 
+// This is a pure JSON API + auth-redirect service, not an HTML-rendering app --
+// default-src 'none' is the correct baseline (nothing here needs scripts, styles,
+// images, or frames of its own). bezzie's cspContributions() adds only what its
+// OAuth flow actually needs (currently just form-action -- see bezzie's own docs
+// for why connect-src/frame-src stay empty for a correct BFF architecture).
+function buildCsp(contributions: Record<string, string[]>): string {
+  const directives = new Map<string, string[]>([
+    ['default-src', ["'none'"]],
+    ['form-action', ["'self'"]],
+    ['frame-ancestors', ["'none'"]],
+    ['base-uri', ["'none'"]],
+  ])
+  for (const [directive, origins] of Object.entries(contributions)) {
+    if (origins.length === 0) continue
+    directives.set(directive, [...(directives.get(directive) ?? []), ...origins])
+  }
+  return Array.from(directives.entries())
+    .map(([directive, values]) => `${directive} ${values.join(' ')}`)
+    .join('; ')
+}
+
 // protobuf-es messages carry a $typeName field (and other internal shape) that
 // shouldn't leak into the JSON API -- pick only the fields the frontend actually uses.
 const serializeTodo = (todo: Todo) => ({
@@ -46,6 +67,11 @@ const worker = {
       baseUrl: env.APP_BASE_URL,
       defaultReturnTo: '/dashboard',
       secureCookies: !isLocal,
+      // Explicit rather than relying on bezzie's defaults staying put --
+      // flood/quota protection on /auth/login and /auth/callback, not
+      // brute-force protection (Auth0's hosted login handles that). Fails
+      // open on any counter-store error.
+      rateLimit: { enabled: true, limit: 10, windowSeconds: 120 },
     })
 
     const app = new Hono<{ Bindings: Env; Variables: Variables }>()
@@ -69,6 +95,20 @@ const worker = {
         userSub: c.var.user?.sub,
       })
     })
+
+    // Applies to every response, auth routes included -- bezzie's own routes
+    // further tighten frame-ancestors on top of whatever's already set here.
+    app.use('*', async (c, next) => {
+      const contributions = await auth.cspContributions()
+      c.header('Content-Security-Policy', buildCsp(contributions))
+      await next()
+    })
+
+    // General API abuse protection, separate from bezzie's own auth-route
+    // limiter (config'd below). Identity-keyed via c.var.user.sub -- generous
+    // enough that the real (single) user never notices, tight enough to blunt
+    // a scripted loop.
+    app.use('/api/*', auth.rateLimiter({ limit: 30, windowSeconds: 60 }))
 
     app.route('/auth', auth.routes())
     app.get('/api/me', auth.middleware(), (c) => c.json(c.var.user))
