@@ -1,0 +1,27 @@
+name: Nudge stale Dependabot PRs
+on:
+  schedule:
+    - cron: "0 4 * * 1" # weekly, Monday 04:00 UTC
+  workflow_dispatch: {}
+permissions:
+  pull-requests: write
+jobs:
+  recreate-stale:
+    runs-on: ubuntu-latest
+    steps:
+      # A Dependabot PR that fails CI (e.g. a dependency needing an upstream fix
+      # that doesn't exist yet) just sits open indefinitely -- auto-merge never
+      # fires on red CI, so nothing unsafe happens, but nothing ever re-checks it
+      # either. "@dependabot recreate" makes Dependabot regenerate the PR against
+      # the current registry state and current main, so a fix that lands upstream
+      # gets picked up here automatically instead of waiting on someone to notice.
+      - name: Comment @dependabot recreate on Dependabot PRs open over 7 days
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr list --search "author:app/dependabot is:open" --json number,createdAt \
+            --jq '.[] | select((now - (.createdAt | fromdateiso8601)) > (7 * 86400)) | .number' \
+            | while read -r pr; do
+                echo "Nudging PR #$pr"
+                gh pr comment "$pr" --body "@dependabot recreate"
+              done
