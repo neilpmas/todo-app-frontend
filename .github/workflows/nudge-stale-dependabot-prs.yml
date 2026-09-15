@@ -18,6 +18,10 @@ jobs:
       - name: Comment @dependabot recreate on Dependabot PRs open over 7 days
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # No actions/checkout in this job -- gh normally infers the repo from
+          # the local git remote, which doesn't exist without one. GH_REPO tells
+          # it directly instead.
+          GH_REPO: ${{ github.repository }}
         run: |
           gh pr list --search "author:app/dependabot is:open" --json number,createdAt \
             --jq '.[] | select((now - (.createdAt | fromdateiso8601)) > (7 * 86400)) | .number' \
