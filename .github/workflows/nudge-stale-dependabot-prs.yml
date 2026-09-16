@@ -17,7 +17,14 @@ jobs:
       # gets picked up here automatically instead of waiting on someone to notice.
       - name: Comment @dependabot recreate on Dependabot PRs open over 7 days
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Dependabot only honors comment commands from an identity with real
+          # push access -- it silently rejects them from the default
+          # github-actions[bot] actor ("only users with push access can use
+          # that command"), even with pull-requests: write granted on the
+          # token. DEPENDABOT_PAT is a fine-grained PAT scoped to just this
+          # repo's pull requests, so the comment lands as an account Dependabot
+          # actually recognizes.
+          GH_TOKEN: ${{ secrets.DEPENDABOT_PAT }}
           # No actions/checkout in this job -- gh normally infers the repo from
           # the local git remote, which doesn't exist without one. GH_REPO tells
           # it directly instead.
