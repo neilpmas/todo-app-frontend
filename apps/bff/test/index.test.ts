@@ -21,8 +21,11 @@ vi.mock('@connectrpc/connect', async () => {
   return { ...actual, createClient: vi.fn() }
 })
 
+let discoveryFetches = 0
+
 vi.stubGlobal('fetch', async (url: string) => {
   if (url.includes('.well-known/openid-configuration')) {
+    discoveryFetches += 1
     return new Response(JSON.stringify({
       issuer: 'https://test.example.com',
       authorization_endpoint: 'https://test.auth0.com/authorize',
@@ -325,6 +328,79 @@ describe('BFF Worker', () => {
       const data = await response.json()
       expect(data).toEqual({ version: '1.2.3', environment: 'production' })
       expect(getServerInfo).toHaveBeenCalled()
+    })
+  })
+
+  it('fetches Auth0 discovery once and reuses it across requests', async () => {
+    // Every request runs cspContributions(), which reads OIDC discovery. The auth
+    // instance (and its cache) is built once per isolate, so all the requests made
+    // by this file's tests -- dozens by now -- share a single discovery fetch.
+    const ctx = { waitUntil: vi.fn(), passThroughOnException: vi.fn() } as unknown as ExecutionContext
+    for (let i = 0; i < 5; i++) {
+      await worker.fetch(new Request('https://test.example.com/api/me'), TEST_ENV, ctx)
+    }
+
+    expect(discoveryFetches).toBe(1)
+  })
+
+  describe('/api/* rate limiting', () => {
+    const ctx = {
+      waitUntil: vi.fn(),
+      passThroughOnException: vi.fn(),
+    } as unknown as ExecutionContext
+
+    const getMe = (sessionId?: string, headers: Record<string, string> = {}) =>
+      worker.fetch(
+        new Request('https://test.example.com/api/me', {
+          headers: { ...(sessionId ? { Cookie: `__Host-session=${sessionId}` } : {}), ...headers },
+        }),
+        TEST_ENV,
+        ctx,
+      )
+
+    const setupTwoUsers = () => {
+      const now = Math.floor(Date.now() / 1000)
+      const session = (sub: string) => ({
+        _type: 'session',
+        accessToken: `token-${sub}`,
+        expiresAt: now + 3600,
+        createdAt: now,
+        user: { sub },
+      })
+      vi.mocked(TEST_ENV.SESSION_KV.get).mockImplementation(async (key: string, type?: string) => {
+        const found =
+          key === 'session:session-a' ? session('user-123') : key === 'session:session-b' ? session('user-456') : null
+        if (!found) return null
+        return type === 'json' ? found : JSON.stringify(found)
+      })
+    }
+
+    it('turns unauthenticated requests away with 401 before they reach the limiter', async () => {
+      // The CF-Connecting-IP header gives the limiter something to key on. If it ran
+      // ahead of auth (as it once did), this IP would start getting 429s after 30.
+      const statuses = new Set<number>()
+      for (let i = 0; i < 65; i++) {
+        statuses.add((await getMe(undefined, { 'cf-connecting-ip': '203.0.113.9' })).status)
+      }
+
+      expect([...statuses]).toEqual([401])
+      expect(TEST_ENV.SESSION_KV.put).not.toHaveBeenCalled()
+    })
+
+    it('limits an authenticated user by their own sub, without touching other users', async () => {
+      setupTwoUsers()
+
+      // No CF-Connecting-IP header here, so bezzie skips limiting entirely unless it
+      // keyed on the user -- a 429 at all proves identity keying. 65 requests
+      // guarantees the limit is crossed even if the 60s window rolls over mid-loop.
+      const responses: Response[] = []
+      for (let i = 0; i < 65; i++) responses.push(await getMe('session-a'))
+
+      const limited = responses.find((r) => r.status === 429)
+      expect(limited).toBeDefined()
+      expect(limited?.headers.get('Retry-After')).toBe('60')
+
+      expect((await getMe('session-b')).status).toBe(200)
     })
   })
 })

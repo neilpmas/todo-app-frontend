@@ -1,5 +1,5 @@
 import { Hono, type Context } from 'hono'
-import { createBezzie, providers, cloudflareKVAdapter } from 'bezzie'
+import { createBezzie, providers, cloudflareKVAdapter, type AuthenticatedVariables } from 'bezzie'
 import { createClient, ConnectError, Code } from '@connectrpc/connect'
 import { TemplateService, type Todo } from '@template/proto'
 import { timestampDate } from '@bufbuild/protobuf/wkt'
@@ -51,163 +51,181 @@ export interface Env {
   SENTRY_DSN?: string
 }
 
-type Variables = {
+// Auth middleware is mounted once for /api/*, not per route, so route handlers
+// no longer infer bezzie's user/accessToken types from it -- declare them here.
+type Variables = AuthenticatedVariables & {
   requestId: string
 }
 
+function buildApp(env: Env) {
+  const isLocal = new URL(env.APP_BASE_URL).hostname === 'localhost'
+  const auth = createBezzie({
+    ...providers.auth0(env.AUTH0_DOMAIN),
+    clientId: env.AUTH0_CLIENT_ID,
+    clientSecret: env.AUTH0_CLIENT_SECRET,
+    audience: env.AUTH0_AUDIENCE,
+    adapter: cloudflareKVAdapter(env.SESSION_KV),
+    baseUrl: env.APP_BASE_URL,
+    defaultReturnTo: '/dashboard',
+    secureCookies: !isLocal,
+    // Explicit rather than relying on bezzie's defaults staying put --
+    // flood/quota protection on /auth/login and /auth/callback, not
+    // brute-force protection (Auth0's hosted login handles that). Fails
+    // open on any counter-store error.
+    rateLimit: { enabled: true, limit: 10, windowSeconds: 120 },
+  })
+
+  const app = new Hono<{ Bindings: Env; Variables: Variables }>()
+
+  // Runs before auth, so every request gets one log line -- including auth
+  // failures and 404s, which previously logged nothing at all. The request id
+  // is threaded onto outgoing backend calls (x-request-id) so a single id
+  // greps across both services' logs for the same request.
+  app.use('*', async (c, next) => {
+    const requestId = crypto.randomUUID()
+    c.set('requestId', requestId)
+    c.header('X-Request-Id', requestId)
+    const startedAt = Date.now()
+    await next()
+    log.info('request completed', {
+      requestId,
+      method: c.req.method,
+      path: new URL(c.req.url).pathname,
+      status: c.res.status,
+      durationMs: Date.now() - startedAt,
+      userSub: c.var.user?.sub,
+    })
+  })
+
+  // Applies to every response, auth routes included -- bezzie's own routes
+  // further tighten frame-ancestors on top of whatever's already set here.
+  app.use('*', async (c, next) => {
+    const contributions = await auth.cspContributions()
+    c.header('Content-Security-Policy', buildCsp(contributions))
+    await next()
+  })
+
+  // Auth runs first so the limiter below sees c.var.user and keys on the user's
+  // sub. It used to be mounted ahead of the per-route auth.middleware(), so it
+  // never saw a user and always fell back to keying on IP. Doing auth first also
+  // means unauthenticated requests are turned away without a counter write.
+  app.use('/api/*', auth.middleware())
+
+  // General API abuse protection, separate from bezzie's own auth-route
+  // limiter (config'd on createBezzie above) -- generous enough that the real
+  // (single) user never notices, tight enough to blunt a scripted loop.
+  app.use('/api/*', auth.rateLimiter({ limit: 30, windowSeconds: 60 }))
+
+  app.route('/auth', auth.routes())
+  app.get('/api/me', (c) => c.json(c.var.user))
+
+  const handleConnectError = (err: unknown, c: Context<{ Bindings: Env; Variables: Variables }>) => {
+    if (err instanceof ConnectError) {
+      switch (err.code) {
+        case Code.NotFound:
+          return c.json({ error: 'Not Found' }, 404)
+        case Code.PermissionDenied:
+          return c.json({ error: 'Permission Denied' }, 403)
+        case Code.Unauthenticated:
+          return c.json({ error: 'Unauthenticated' }, 401)
+      }
+    }
+    // Only reached for ConnectError codes not handled above (i.e. genuinely
+    // unexpected ones, not the routine NotFound/PermissionDenied/Unauthenticated
+    // cases) and non-Connect errors -- both are worth Sentry's attention.
+    Sentry.captureException(err, { extra: { requestId: c.var.requestId } })
+    if (err instanceof ConnectError) {
+      log.error('backend call failed', {
+        requestId: c.var.requestId,
+        connectErrorCode: err.code,
+        message: err.message,
+        rawMessage: err.rawMessage,
+      })
+    } else {
+      log.error('backend call failed with a non-Connect error', {
+        requestId: c.var.requestId,
+        error: err instanceof Error ? err.message : String(err),
+      })
+    }
+    return c.json({ error: 'Internal Server Error' }, 500)
+  }
+
+  app.get('/api/info', async (c) => {
+    const client = createClient(TemplateService, getTransport(c.env.BACKEND_URL))
+    try {
+      const info = await client.getServerInfo(
+        {},
+        { headers: { authorization: `Bearer ${c.var.accessToken}`, 'x-request-id': c.var.requestId } },
+      )
+      return c.json({ version: info.version, environment: info.environment })
+    } catch (err) {
+      return handleConnectError(err, c)
+    }
+  })
+
+  app.get('/api/todos', async (c) => {
+    const { client, options } = getTodoClient(c.env.BACKEND_URL, c.var.accessToken, c.var.requestId)
+    try {
+      const response = await client.getTodos({}, options)
+      return c.json(response.todos.map(serializeTodo))
+    } catch (err) {
+      return handleConnectError(err, c)
+    }
+  })
+
+  app.post('/api/todos', async (c) => {
+    const { title } = await c.req.json<{ title: string }>()
+    if (!title || title.trim() === '') {
+      return c.json({ error: 'Title is required' }, 400)
+    }
+    const { client, options } = getTodoClient(c.env.BACKEND_URL, c.var.accessToken, c.var.requestId)
+    try {
+      const todo = await client.createTodo({ title }, options)
+      return c.json(serializeTodo(todo), 201)
+    } catch (err) {
+      return handleConnectError(err, c)
+    }
+  })
+
+  app.patch('/api/todos/:id', async (c) => {
+    const id = c.req.param('id')
+    const { client, options } = getTodoClient(c.env.BACKEND_URL, c.var.accessToken, c.var.requestId)
+    try {
+      const todo = await client.completeTodo({ id }, options)
+      return c.json(serializeTodo(todo))
+    } catch (err) {
+      return handleConnectError(err, c)
+    }
+  })
+
+  app.delete('/api/todos/:id', async (c) => {
+    const id = c.req.param('id')
+    const { client, options } = getTodoClient(c.env.BACKEND_URL, c.var.accessToken, c.var.requestId)
+    try {
+      const response = await client.deleteTodo({ id }, options)
+      if (response.success) {
+        return c.body(null, 204)
+      }
+      return c.json({ error: 'Failed to delete todo' }, 500)
+    } catch (err) {
+      return handleConnectError(err, c)
+    }
+  })
+
+  return app
+}
+
+// Built once per isolate: createBezzie() owns an OIDC discovery cache (and the
+// limiter's in-memory pre-filter), so constructing it per request threw both
+// away and re-fetched Auth0's discovery document on every single request.
+// Worker bindings are stable for the life of an isolate, so capturing them here is fine.
+let app: ReturnType<typeof buildApp> | undefined
+
 const worker = {
   fetch(request: Request, env: Env, ctx: ExecutionContext) {
-    const isLocal = new URL(env.APP_BASE_URL).hostname === 'localhost'
-    const auth = createBezzie({
-      ...providers.auth0(env.AUTH0_DOMAIN),
-      clientId: env.AUTH0_CLIENT_ID,
-      clientSecret: env.AUTH0_CLIENT_SECRET,
-      audience: env.AUTH0_AUDIENCE,
-      adapter: cloudflareKVAdapter(env.SESSION_KV),
-      baseUrl: env.APP_BASE_URL,
-      defaultReturnTo: '/dashboard',
-      secureCookies: !isLocal,
-      // Explicit rather than relying on bezzie's defaults staying put --
-      // flood/quota protection on /auth/login and /auth/callback, not
-      // brute-force protection (Auth0's hosted login handles that). Fails
-      // open on any counter-store error.
-      rateLimit: { enabled: true, limit: 10, windowSeconds: 120 },
-    })
-
-    const app = new Hono<{ Bindings: Env; Variables: Variables }>()
-
-    // Runs before auth, so every request gets one log line -- including auth
-    // failures and 404s, which previously logged nothing at all. The request id
-    // is threaded onto outgoing backend calls (x-request-id) so a single id
-    // greps across both services' logs for the same request.
-    app.use('*', async (c, next) => {
-      const requestId = crypto.randomUUID()
-      c.set('requestId', requestId)
-      c.header('X-Request-Id', requestId)
-      const startedAt = Date.now()
-      await next()
-      log.info('request completed', {
-        requestId,
-        method: c.req.method,
-        path: new URL(c.req.url).pathname,
-        status: c.res.status,
-        durationMs: Date.now() - startedAt,
-        userSub: c.var.user?.sub,
-      })
-    })
-
-    // Applies to every response, auth routes included -- bezzie's own routes
-    // further tighten frame-ancestors on top of whatever's already set here.
-    app.use('*', async (c, next) => {
-      const contributions = await auth.cspContributions()
-      c.header('Content-Security-Policy', buildCsp(contributions))
-      await next()
-    })
-
-    // General API abuse protection, separate from bezzie's own auth-route
-    // limiter (config'd below). Identity-keyed via c.var.user.sub -- generous
-    // enough that the real (single) user never notices, tight enough to blunt
-    // a scripted loop.
-    app.use('/api/*', auth.rateLimiter({ limit: 30, windowSeconds: 60 }))
-
-    app.route('/auth', auth.routes())
-    app.get('/api/me', auth.middleware(), (c) => c.json(c.var.user))
-
-    const handleConnectError = (err: unknown, c: Context<{ Bindings: Env; Variables: Variables }>) => {
-      if (err instanceof ConnectError) {
-        switch (err.code) {
-          case Code.NotFound:
-            return c.json({ error: 'Not Found' }, 404)
-          case Code.PermissionDenied:
-            return c.json({ error: 'Permission Denied' }, 403)
-          case Code.Unauthenticated:
-            return c.json({ error: 'Unauthenticated' }, 401)
-        }
-      }
-      // Only reached for ConnectError codes not handled above (i.e. genuinely
-      // unexpected ones, not the routine NotFound/PermissionDenied/Unauthenticated
-      // cases) and non-Connect errors -- both are worth Sentry's attention.
-      Sentry.captureException(err, { extra: { requestId: c.var.requestId } })
-      if (err instanceof ConnectError) {
-        log.error('backend call failed', {
-          requestId: c.var.requestId,
-          connectErrorCode: err.code,
-          message: err.message,
-          rawMessage: err.rawMessage,
-        })
-      } else {
-        log.error('backend call failed with a non-Connect error', {
-          requestId: c.var.requestId,
-          error: err instanceof Error ? err.message : String(err),
-        })
-      }
-      return c.json({ error: 'Internal Server Error' }, 500)
-    }
-
-    app.get('/api/info', auth.middleware(), async (c) => {
-      const client = createClient(TemplateService, getTransport(c.env.BACKEND_URL))
-      try {
-        const info = await client.getServerInfo(
-          {},
-          { headers: { authorization: `Bearer ${c.var.accessToken}`, 'x-request-id': c.var.requestId } },
-        )
-        return c.json({ version: info.version, environment: info.environment })
-      } catch (err) {
-        return handleConnectError(err, c)
-      }
-    })
-
-    app.get('/api/todos', auth.middleware(), async (c) => {
-      const { client, options } = getTodoClient(c.env.BACKEND_URL, c.var.accessToken, c.var.requestId)
-      try {
-        const response = await client.getTodos({}, options)
-        return c.json(response.todos.map(serializeTodo))
-      } catch (err) {
-        return handleConnectError(err, c)
-      }
-    })
-
-    app.post('/api/todos', auth.middleware(), async (c) => {
-      const { title } = await c.req.json<{ title: string }>()
-      if (!title || title.trim() === '') {
-        return c.json({ error: 'Title is required' }, 400)
-      }
-      const { client, options } = getTodoClient(c.env.BACKEND_URL, c.var.accessToken, c.var.requestId)
-      try {
-        const todo = await client.createTodo({ title }, options)
-        return c.json(serializeTodo(todo), 201)
-      } catch (err) {
-        return handleConnectError(err, c)
-      }
-    })
-
-    app.patch('/api/todos/:id', auth.middleware(), async (c) => {
-      const id = c.req.param('id')
-      const { client, options } = getTodoClient(c.env.BACKEND_URL, c.var.accessToken, c.var.requestId)
-      try {
-        const todo = await client.completeTodo({ id }, options)
-        return c.json(serializeTodo(todo))
-      } catch (err) {
-        return handleConnectError(err, c)
-      }
-    })
-
-    app.delete('/api/todos/:id', auth.middleware(), async (c) => {
-      const id = c.req.param('id')
-      const { client, options } = getTodoClient(c.env.BACKEND_URL, c.var.accessToken, c.var.requestId)
-      try {
-        const response = await client.deleteTodo({ id }, options)
-        if (response.success) {
-          return c.body(null, 204)
-        }
-        return c.json({ error: 'Failed to delete todo' }, 500)
-      } catch (err) {
-        return handleConnectError(err, c)
-      }
-    })
-
+    app ??= buildApp(env)
     return app.fetch(request, env, ctx)
-  }
+  },
 }
 
 // Error tracking only for now, no performance tracing -- matches the backend's
