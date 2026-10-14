@@ -20,7 +20,7 @@
   },
   "devDependencies": {
     "turbo": "^2.10.10",
-    "typescript": "^6.0.3"
+    "typescript": "^7.0.2"
   },
   "allowScripts": {
     "@bufbuild/buf@1.72.0": true,
