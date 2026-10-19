@@ -271,7 +271,7 @@ cd apps/web && npm test           # React only
 
 | Layer | Approach |
 |---|---|
-| BFF (Workers) | Vitest + `@cloudflare/vitest-pool-workers` (`apps/bff/test/`) |
+| BFF (Workers) | Vitest + `@cloudflare/vitest-plugin` (`apps/bff/test/`) |
 | React | Vitest + React Testing Library (`apps/web/src/**/*.test.tsx`) |
 
 ## Deployment
