@@ -21,7 +21,8 @@
   "devDependencies": {
     "turbo": "^2.10.10",
     "typescript": "^6.0.3",
-    "vitest": "^5.0.5"
+    "vitest": "^5.0.5",
+    "wrangler": "^4.151.2"
   },
   "allowScripts": {
     "@bufbuild/buf@1.72.0": true,
