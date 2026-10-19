@@ -17,4 +17,15 @@ describe('_headers CSP', () => {
 
     expect(formAction).toContain(`https://${domain}`)
   })
+
+  // Cloudflare injects Web Analytics' beacon.min.js into the HTML at the edge; with
+  // script-src 'self' alone the browser blocks it and visits are never counted. Its
+  // reporting goes back through the site's own /cdn-cgi/rum, which connect-src 'self' covers.
+  it('allows the Cloudflare Web Analytics beacon in script-src', () => {
+    const headers = readFileSync(resolve(__dirname, '../public/_headers'), 'utf8')
+    const csp = /Content-Security-Policy:\s*(.+)/.exec(headers)?.[1] ?? ''
+    const scriptSrc = csp.split(';').map((d) => d.trim()).find((d) => d.startsWith('script-src'))
+
+    expect(scriptSrc).toContain('https://static.cloudflareinsights.com')
+  })
 })
